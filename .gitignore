@@ -1,0 +1,23 @@
+# Character clips, references, and generated shots live on GPFS.
+project
+
+# Third-party checkouts, including their media and git history.
+repos/
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Training weights and media, if they land in this tree later
+*.mp4
+*.mov
+*.webm
+*.mkv
+*.wav
+*.m4a
+*.m4s
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.bin
