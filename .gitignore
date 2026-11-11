@@ -21,3 +21,7 @@ __pycache__/
 *.pth
 *.ckpt
 *.bin
+
+# Archived shot videos are tracked. Training clips under project/ stay out.
+!shots/**/*.mp4
+!shots/**/*.wav

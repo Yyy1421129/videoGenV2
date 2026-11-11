@@ -1,0 +1,30 @@
+{
+  "character_id": "deepseek-whale",
+  "style": "与参考图一致的干净赛璐璐",
+  "model": "manual",
+  "tts_text": "人类，我喜欢你",
+  "image_front": "/home/yi.yang/src/videoGenV2/project/deepseek/deepFront.jpg",
+  "image_back": "/home/yi.yang/src/videoGenV2/project/deepseek/deepseekBack.jpg",
+  "size": "704*1280",
+  "frame_num": 121,
+  "sample_steps": 40,
+  "guide_scale": 6.0,
+  "seed": 81,
+  "num_candidates": 1,
+  "seeds": [
+    81
+  ],
+  "lora": "/gpfs/sjtu/audiocc/home/yi.yang/videogen-v2/models/lora/wan_2.2_B_anime_v01_000153000.safetensors",
+  "lora_scale": 0.6,
+  "prompt_wav": "/home/yi.yang/src/CosyVoice/asset/zero_shot_prompt.wav",
+  "prompt_text": "希望你以后能够做的比我还好呦。",
+  "shot": "whale-night",
+  "description": "正面全身，约一秒内抬手挥一下并慢慢微笑，然后保持。夜路路灯。",
+  "scene": "路灯下的人行道，背景稍虚，角色全身留在画面里",
+  "view": "front",
+  "scene_en": "On a sidewalk at night under one street lamp. The background is slightly soft. The character stays fully visible from head to shoes.",
+  "action_en": "She starts from the reference pose. Over about one second, she raises one hand beside her cheek and waves once, while her mouth gradually opens into a happy smile and her eyes narrow slightly. The hand moves a small amount in each frame instead of jumping to the final pose. The smile and the raised hand then remain through the final frames.",
+  "wan_prompt": "The same chibi anime girl as the reference image, full body from head to shoes, blue hair, blue eyes, maid dress and whale apron, round face, clean line art, sharp cel shading. On a sidewalk at night under one street lamp. The background is slightly soft. The character stays fully visible from head to shoes. She starts from the reference pose. Over about one second, she raises one hand beside her cheek and waves once, while her mouth gradually opens into a happy smile and her eyes narrow slightly. The hand moves a small amount in each frame instead of jumping to the final pose. The smile and the raised hand then remain through the final frames. Static camera. One primary action only. The pose changes a little in each frame over about one second, then holds through the final frames. The other arm stays down, both feet stay on the ground, and the body is not cropped.",
+  "n_prompt": "写实照片, 真人, 3D渲染, 模糊, 失焦, 过曝白雾, 光晕, 畸形手指, 字幕, 换装, 裁掉身体, 只剩头部, 背对镜头, 双臂同时高举, 五官错位, 脸部融化, 肢体拉长",
+  "image": "/home/yi.yang/src/videoGenV2/project/deepseek/deepFront.jpg"
+}

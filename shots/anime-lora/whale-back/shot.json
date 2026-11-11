@@ -1,0 +1,30 @@
+{
+  "character_id": "deepseek-whale",
+  "style": "与参考图一致的干净赛璐璐",
+  "model": "manual",
+  "tts_text": "人类，我喜欢你",
+  "image_front": "/home/yi.yang/src/videoGenV2/project/deepseek/deepFront.jpg",
+  "image_back": "/home/yi.yang/src/videoGenV2/project/deepseek/deepseekBack.jpg",
+  "size": "704*1280",
+  "frame_num": 121,
+  "sample_steps": 40,
+  "guide_scale": 6.0,
+  "seed": 81,
+  "num_candidates": 1,
+  "seeds": [
+    81
+  ],
+  "lora": "/gpfs/sjtu/audiocc/home/yi.yang/videogen-v2/models/lora/wan_2.2_B_anime_v01_000153000.safetensors",
+  "lora_scale": 0.6,
+  "prompt_wav": "/home/yi.yang/src/CosyVoice/asset/zero_shot_prompt.wav",
+  "prompt_text": "希望你以后能够做的比我还好呦。",
+  "shot": "whale-back",
+  "description": "背面全身，约一秒内裙摆和鲸鱼尾轻轻摆一下，然后保持。",
+  "scene": "白底，角色全身留在画面里",
+  "view": "back",
+  "scene_en": "White background, even lighting.",
+  "action_en": "She starts from the reference pose. Over about one second, the skirt hem and the blue whale tail sway gently to one side, a little in each frame, then hold. She does not turn around.",
+  "wan_prompt": "The same chibi anime girl as the reference image, seen from behind, full body from head to shoes, long blue hair, blue bows on both sides, maid dress, white frilled hem, and a blue whale tail at the back of the skirt. The face is hidden. Clean line art, sharp cel shading. White background, even lighting. She starts from the reference pose. Over about one second, the skirt hem and the blue whale tail sway gently to one side, a little in each frame, then hold. She does not turn around. Static camera. One primary action only. The pose changes a little in each frame over about one second, then holds through the final frames. The other arm stays down, both feet stay on the ground, and the body is not cropped.",
+  "n_prompt": "写实照片, 真人, 3D渲染, 模糊, 失焦, 过曝白雾, 光晕, 畸形手指, 字幕, 换装, 裁掉身体, 只剩头部, 露出正脸, 第二个人, 肢体拉长",
+  "image": "/home/yi.yang/src/videoGenV2/project/deepseek/deepseekBack.jpg"
+}

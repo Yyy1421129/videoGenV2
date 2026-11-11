@@ -1,0 +1,28 @@
+{
+  "character_id": "deepseek-whale",
+  "style": "与参考图一致的干净赛璐璐",
+  "model": "manual",
+  "tts_text": "到这里来",
+  "image_front": "/home/yi.yang/src/videoGenV2/project/deepseek/deepFront.jpg",
+  "image_back": "/home/yi.yang/src/videoGenV2/project/deepseek/deepseekBack.jpg",
+  "size": "704*1280",
+  "frame_num": 121,
+  "sample_steps": 40,
+  "guide_scale": 6.0,
+  "seed": 81,
+  "num_candidates": 1,
+  "seeds": [
+    81
+  ],
+  "lora": "/gpfs/sjtu/audiocc/home/yi.yang/videogen-v2/lora/whale_character_r16_800_s0800.safetensors",
+  "lora_scale": 1.0,
+  "prompt_wav": "/home/yi.yang/src/CosyVoice/asset/zero_shot_prompt.wav",
+  "prompt_text": "希望你以后能够做的比我还好呦。",
+  "view": "back",
+  "description": "雪庭背面蹲下拢雪再站起",
+  "scene": "薄雪庭院",
+  "image": "/home/yi.yang/src/videoGenV2/project/deepseek/deepseekBack.jpg",
+  "wan_prompt": "蓝色长发蓝眼睛的鲸鱼娘，女仆装，围裙上有鲸鱼图案，赛璐璐动画。背面全身，看不见脸，站在薄雪的庭院里，蹲下去用双手拢起一捧雪，再站直，雪留在手里。镜头固定，人的大小保持不变，全身从头发到鞋子都留在画面里。",
+  "n_prompt": "写实照片, 真人, 3D渲染, 模糊, 失焦, 过曝白雾, 光晕, 畸形手指, 字幕, 换装, 裁掉身体, 只剩头部, 露出正脸, 第二个人, 人物突然变小, 肢体拉长",
+  "shot": "char-snow-s800"
+}

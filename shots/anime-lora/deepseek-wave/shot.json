@@ -1,0 +1,26 @@
+{
+  "shot": "deepseek-wave",
+  "description": "参考图上的角色最后停在微笑并单手挥手。",
+  "style": "与参考图一致的干净赛璐璐",
+  "scene": "白底，角色全身留在画面里",
+  "model": "manual",
+  "tts_text": "人类，我喜欢你",
+  "wan_prompt": "The same chibi anime girl as the reference image, full body from head to shoes, white background, blue hair, blue eyes, maid dress and whale apron. She starts from the reference pose. She then raises one hand beside her cheek and waves, while her mouth opens into a happy smile and her eyes narrow slightly. The smile and the raised waving hand remain through the final frames, instead of returning to a neutral face. The other arm stays down, both feet stay on the ground, and the face stays a round chibi face. Clean line art, sharp cel shading, even lighting.",
+  "n_prompt": "写实照片, 真人, 3D渲染, 模糊, 失焦, 过曝白雾, 光晕, 畸形手指, 字幕, 换装, 裁掉身体, 只剩头部, 双臂同时高举, 鞠躬, 跳跃, 五官错位, 脸部融化, 肢体拉长, 表情立刻恢复成直线嘴",
+  "image": "/home/yi.yang/src/videoGenV2/project/deepseek/deepFront.jpg",
+  "size": "704*1280",
+  "frame_num": 121,
+  "sample_steps": 40,
+  "guide_scale": 6.0,
+  "seed": 80,
+  "num_candidates": 3,
+  "seeds": [
+    80,
+    81,
+    82
+  ],
+  "lora": "/gpfs/sjtu/audiocc/home/yi.yang/videogen-v2/models/lora/wan_2.2_B_anime_v01_000153000.safetensors",
+  "lora_scale": 0.6,
+  "prompt_wav": "/home/yi.yang/src/CosyVoice/asset/zero_shot_prompt.wav",
+  "prompt_text": "希望你以后能够做的比我还好呦。"
+}

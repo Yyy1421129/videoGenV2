@@ -108,6 +108,14 @@ python /home/yi.yang/src/videoGenV2/scripts/score_motion.py \
 
 `snap` 为 true 的片子最大帧差至少是 4。deepseek-wave 的候选 3 会落在这里，候选 2 不会。留下的平滑片子才作为以后换场景和微调的正样本。
 
+已经看过的片子按权重分在 `project/shots` 下，并同步进仓库的 `shots/`：
+
+- `anime-lora`：现成赛璐璐 LoRA 的挥手试验和四条场景。
+- `char-lora-s120`：第一版角色 LoRA，120 步，锁定第一帧。
+- `char-lora-s800`：第二版角色 LoRA，800 步，仍然锁定第一帧。同样的三条中文提示词和种子 81，人物基本不动。
+
+新镜头还是写到 `project/shots/<镜头名>`，不自动归进这三类。
+
 ## 还原 B 站缓存
 
 把客户端下载的缓存目录放进 `project/deepseek/`。每个目录里有 `videoInfo.json` 和两个 `.m4s`。还原时去掉客户端加在片段开头的 `000000000`，再把画面和声音封装成 mp4，不重新编码。成品用分集标题命名，写在缓存目录的旁边。同名文件已存在就跳过。
