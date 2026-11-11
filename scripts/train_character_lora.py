@@ -1,8 +1,10 @@
 """Character LoRA for Wan2.2 TI2V-5B.
 
 Freezes the DiT, the T5 encoder, and the VAE. Trains rank-16 LoRA on the
-attention and feed-forward linears with flow-matching loss. The first latent
-frame stays clean and is left out of the loss, matching TI2V inference.
+attention and feed-forward linears with flow-matching loss. Every latent
+frame, including the first, is noised and included in the loss. Inference
+that passes a reference image still pins that frame; this run is for the
+case where the character has to move.
 
 Does not load the anime style LoRA. Saved weights use the same
 diffusion_model.*.lora_A/B layout that scripts/run_lora.py already applies.
@@ -42,10 +44,18 @@ class LoRALinear(nn.Module):
         nn.init.normal_(self.lora_A, std=1.0 / math.sqrt(rank))
 
     def forward(self, x):
-        y = F.linear(x, self.base.weight, self.base.bias)
-        a = self.lora_A.to(dtype=x.dtype)
-        b = self.lora_B.to(dtype=x.dtype)
-        return y + (x @ a.transpose(0, 1) @ b.transpose(0, 1))
+        # Wan casts some activations to fp32 before the linear, while the
+        # frozen base weights stay bf16. Cast explicitly and keep the LoRA
+        # product attached to the fp32 parameters.
+        out_dtype = x.dtype
+        with torch.amp.autocast("cuda", enabled=False):
+            weight = self.base.weight
+            bias = self.base.bias
+            x_base = x.to(dtype=weight.dtype)
+            y = F.linear(x_base, weight, bias if bias is not None else None)
+            x_lora = x.to(dtype=self.lora_A.dtype)
+            delta = (x_lora @ self.lora_A.transpose(0, 1)) @ self.lora_B.transpose(0, 1)
+            return (y + delta.to(dtype=y.dtype)).to(dtype=out_dtype)
 
 
 def probe(path):
@@ -66,18 +76,23 @@ def probe(path):
 
 
 def read_window(path, start, count, width, height, fps):
+    # Select by frame index. Seeking with -ss rounds to a timestamp and can
+    # drop the last frame of a clip.
+    end = start + count - 1
     cmd = [
         FFMPEG, "-v", "error", "-i", str(path),
-        "-ss", f"{start / fps:.4f}",
+        "-vf", "select='between(n,%s,%s)',scale=%s:%s:flags=area" % (
+            start, end, width, height),
         "-frames:v", str(count),
-        "-vf", f"scale={width}:{height}:flags=area",
+        "-fps_mode", "passthrough",
         "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
     ]
     raw = subprocess.check_output(cmd)
     expected = count * height * width * 3
     if len(raw) != expected:
-        raise RuntimeError("%s window %s got %s bytes, expected %s" % (
-            path.name, start, len(raw), expected))
+        print("SHORT_WINDOW %s start %s fps %.3f got %s expected %s" % (
+            path.name, start, fps, len(raw), expected), flush=True)
+        return None
     arr = np.frombuffer(raw, dtype=np.uint8).reshape(count, height, width, 3)
     ten = torch.from_numpy(arr.copy()).permute(3, 0, 1, 2).float()
     return ten / 127.5 - 1.0
@@ -170,6 +185,7 @@ def main():
         type=Path,
         default=Path("/gpfs/sjtu/audiocc/home/yi.yang/videogen-v2/lora/whale_character_r16.safetensors"),
     )
+    parser.add_argument("--tier", choices=("all", "clean", "noisy"), default="all")
     parser.add_argument("--check-data", action="store_true")
     args = parser.parse_args()
     if args.frames % 4 != 1:
@@ -178,9 +194,14 @@ def main():
         raise SystemExit("width and height must be divisible by 32")
 
     rows = load_rows()
+    if args.tier != "all":
+        rows = [row for row in rows if row["tier"] == args.tier]
+        if not rows:
+            raise SystemExit("no clips with tier %s" % args.tier)
     clean = sum(r["seconds"] for r in rows if r["tier"] == "clean")
     noisy = sum(r["seconds"] for r in rows if r["tier"] == "noisy")
-    print("CLIPS %s clean_s %.1f noisy_s %.1f" % (len(rows), clean, noisy), flush=True)
+    print("CLIPS %s tier %s clean_s %.1f noisy_s %.1f" % (
+        len(rows), args.tier, clean, noisy), flush=True)
     if args.check_data:
         row = rows[0]
         video = read_window(row["path"], 0, args.frames, args.width, args.height, row["fps"])
@@ -231,13 +252,20 @@ def main():
 
     for step in range(1, args.steps + 1):
         t0 = time.time()
-        row = pick(rows, rng)
-        start_max = row["nframes"] - args.frames
-        if start_max < 0:
-            print("SKIP_SHORT %s" % row["file"], flush=True)
-            continue
-        start = rng.randint(0, start_max)
-        video = read_window(row["path"], start, args.frames, args.width, args.height, row["fps"])
+        video = None
+        for _ in range(20):
+            row = pick(rows, rng)
+            start_max = row["nframes"] - args.frames
+            if start_max < 0:
+                print("SKIP_SHORT %s" % row["file"], flush=True)
+                continue
+            start = rng.randint(0, start_max)
+            video = read_window(
+                row["path"], start, args.frames, args.width, args.height, row["fps"])
+            if video is not None:
+                break
+        if video is None:
+            raise SystemExit("no full %s-frame window at step %s" % (args.frames, step))
         with torch.no_grad():
             latent = vae.encode([video.to(device)])[0].detach()
         _, frames, height, width = latent.shape
@@ -248,17 +276,14 @@ def main():
         sigma = args.shift * u / (1 + (args.shift - 1) * u)
         sigma = sigma.clamp(1e-4, 1 - 1e-4)
         noisy = (1 - sigma) * latent + sigma * noise
-        noisy[:, 0] = latent[:, 0]
         target = noise - latent
         t_token = torch.full((1, n_tok), float(sigma * 1000), device=device)
-        t_token[:, :tokens_per_frame] = 0
         text = "" if rng.random() < args.text_drop else row["caption"]
         context = cache[text].to(device=device, dtype=torch.bfloat16)
         opt.zero_grad(set_to_none=True)
-        pred = model([noisy], t_token, [context], n_tok)[0]
-        mask = torch.ones_like(pred)
-        mask[:, 0] = 0
-        loss = ((pred - target) * mask).pow(2).sum() / mask.sum().clamp(min=1)
+        with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+            pred = model([noisy.to(dtype=torch.bfloat16)], t_token, [context], n_tok)[0]
+        loss = (pred.float() - target.float()).pow(2).mean()
         if not torch.isfinite(loss):
             raise SystemExit("non-finite loss at step %s" % step)
         loss.backward()
@@ -280,7 +305,8 @@ def main():
         if step == 1 and not grad_ok:
             raise SystemExit("LoRA received no gradient on step 1")
         if step % args.save_every == 0 or step == args.steps:
-            save_lora(model, args.out, args.rank)
+            ckpt = args.out.with_name("%s_s%04d%s" % (args.out.stem, step, args.out.suffix))
+            save_lora(model, ckpt, args.rank)
 
 
 if __name__ == "__main__":
