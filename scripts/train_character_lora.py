@@ -121,6 +121,37 @@ def pick(rows, rng):
     return rng.choices(rows, weights=weights, k=1)[0]
 
 
+def motion_starts(path, nframes, window):
+    """Starts inside a clip, weighted by how much the picture changes there.
+
+    A small floor keeps a still stretch available. The score is measured on a
+    tiny decode, not on the training resolution.
+    """
+    cmd = [
+        FFMPEG, "-v", "error", "-i", str(path),
+        "-vf", "scale=48:80:flags=area",
+        "-frames:v", str(nframes),
+        "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+    ]
+    raw = subprocess.check_output(cmd)
+    frame = 80 * 48 * 3
+    count = min(nframes, len(raw) // frame)
+    if count < window:
+        return [], []
+    arr = np.frombuffer(raw[:count * frame], dtype=np.uint8).reshape(count, 80, 48, 3)
+    diff = np.abs(arr[1:].astype(np.float32) - arr[:-1].astype(np.float32)).mean(axis=(1, 2, 3))
+    motion = np.zeros(count, dtype=np.float32)
+    motion[1:] = diff
+    csum = np.cumsum(motion)
+    starts = list(range(0, count - window + 1, 4))
+    weights = []
+    for start in starts:
+        end = start + window - 1
+        total = csum[end] - (csum[start - 1] if start else 0.0)
+        weights.append(float(total) / window + 0.05)
+    return starts, weights
+
+
 def inject_lora(model, rank):
     targets = []
     for name, module in model.named_modules():
@@ -202,6 +233,12 @@ def main():
     noisy = sum(r["seconds"] for r in rows if r["tier"] == "noisy")
     print("CLIPS %s tier %s clean_s %.1f noisy_s %.1f" % (
         len(rows), args.tier, clean, noisy), flush=True)
+    for row in rows:
+        starts, weights = motion_starts(row["path"], row["nframes"], args.frames)
+        row["starts"] = starts
+        row["start_weights"] = weights
+    covered = sum(1 for row in rows if row["starts"])
+    print("MOTION_WINDOWS %s/%s clips" % (covered, len(rows)), flush=True)
     if args.check_data:
         row = rows[0]
         video = read_window(row["path"], 0, args.frames, args.width, args.height, row["fps"])
@@ -255,11 +292,10 @@ def main():
         video = None
         for _ in range(20):
             row = pick(rows, rng)
-            start_max = row["nframes"] - args.frames
-            if start_max < 0:
+            if not row["starts"]:
                 print("SKIP_SHORT %s" % row["file"], flush=True)
                 continue
-            start = rng.randint(0, start_max)
+            start = rng.choices(row["starts"], weights=row["start_weights"], k=1)[0]
             video = read_window(
                 row["path"], start, args.frames, args.width, args.height, row["fps"])
             if video is not None:

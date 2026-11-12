@@ -16,7 +16,9 @@ from pathlib import Path
 
 
 SECRET = Path("/home/yi.yang/src/secrets/SJTU_api.txt")
-PROJECT = Path("/home/yi.yang/src/videoGenV2/project")
+ROOT = Path("/home/yi.yang/src/videoGenV2")
+PROJECT = ROOT / "project"
+SHOTS = ROOT / "shots"
 CHARACTER = PROJECT / "deepseek" / "character.json"
 PROMPT_WAV = "/home/yi.yang/src/CosyVoice/asset/zero_shot_prompt.wav"
 PROMPT_TEXT = "希望你以后能够做的比我还好呦。"
@@ -134,7 +136,7 @@ def main():
             raise SystemExit("missing character image: %s" % character[key])
 
     shot = args.shot or datetime.now().strftime("whale-%Y%m%d-%H%M%S")
-    shot_dir = PROJECT / "shots" / shot
+    shot_dir = SHOTS / shot
     shot_dir.mkdir(parents=True, exist_ok=False)
 
     base, key = load_secret(SECRET)

@@ -1,4 +1,4 @@
-# Character clips, references, and generated shots live on GPFS.
+# Character clips and references live on GPFS. Generated shots are tracked under shots/.
 project
 
 # Third-party checkouts, including their media and git history.

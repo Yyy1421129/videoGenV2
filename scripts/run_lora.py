@@ -119,14 +119,17 @@ def main():
         convert_model_dtype=True,
     )
     apply_lora(pipe.model, spec["lora"], float(spec.get("lora_scale", 1.0)))
-    image_path = spec.get("image")
-    if not image_path:
-        view = spec.get("view", "front")
-        image_path = spec.get("image_back" if view == "back" else "image_front")
     image = None
-    if image_path:
-        image = Image.open(image_path).convert("RGB")
-        print("IMAGE", image_path, image.size, flush=True)
+    if spec.get("text_only"):
+        print("TEXT_ONLY", flush=True)
+    else:
+        image_path = spec.get("image")
+        if not image_path:
+            view = spec.get("view", "front")
+            image_path = spec.get("image_back" if view == "back" else "image_front")
+        if image_path:
+            image = Image.open(image_path).convert("RGB")
+            print("IMAGE", image_path, image.size, flush=True)
 
     for index, seed, silent in pending:
         logging.info("candidate %s seed %s", index, seed)
