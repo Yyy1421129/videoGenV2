@@ -1,10 +1,22 @@
 """Character LoRA for Wan2.2 TI2V-5B.
 
-Freezes the DiT, the T5 encoder, and the VAE. Trains rank-16 LoRA on the
-attention and feed-forward linears with flow-matching loss. Every latent
-frame, including the first, is noised and included in the loss. Inference
-that passes a reference image still pins that frame; this run is for the
-case where the character has to move.
+Freezes the DiT, the T5 encoder, and the VAE. Trains a rank-16 LoRA with
+flow-matching loss. Windows are taken at even starts inside each clip.
+
+With --clip-ref, --ref-prob of the steps pin a different frame from the same
+clip into latent frame 0 at timestep 0 and leave that frame out of the loss.
+The remaining frames are the sampled window, so the loss asks for that
+window's motion rather than the pinned pose. The other steps noise every
+frame and score all of them. The reference sheets are not used.
+
+With --pin-first, every step keeps the first latent frame clean at timestep
+0 and leaves it out of the loss. That frame is the encoded window, so the
+later frames continue the clip's own pose. --sheet-prob replaces it with the
+front, side, or back reference on that fraction of steps. --attn-only skips
+the feed-forward layers.
+
+Without either flag, --anchor-prob is the chance of pinning the reference
+sheet. The other steps noise every frame and score all of them.
 
 Does not load the anime style LoRA. Saved weights use the same
 diffusion_model.*.lora_A/B layout that scripts/run_lora.py already applies.
@@ -24,12 +36,26 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from PIL import Image
 
 WAN_REPO = Path("/home/yi.yang/src/videoGenV1/repos/Wan2.2")
 WAN_CKPT = Path("/gpfs/sjtu/audiocc/home/yi.yang/videogen/models/Wan2.2-TI2V-5B")
 CLIPS = Path("/home/yi.yang/src/videoGenV2/project/deepseek/video_data_raw/clips")
+REFS = {
+    "正面": Path("/home/yi.yang/src/videoGenV2/project/deepseek/deepFront_9x16.jpg"),
+    "侧面": Path("/home/yi.yang/src/videoGenV2/project/deepseek/deepseekSide_9x16.jpg"),
+    "背面或转身": Path("/home/yi.yang/src/videoGenV2/project/deepseek/deepseekBack_9x16.jpg"),
+}
 FFMPEG = "/home/yi.yang/miniforge3/envs/videogen-v2/bin/ffmpeg"
 FFPROBE = "/home/yi.yang/miniforge3/envs/videogen-v2/bin/ffprobe"
+# These clips teach a shrinking body or a cropped one. Their sample weight
+# is divided by three when --downweight is set.
+DOWNWEIGHT = {
+    "ref_back_01.mp4",
+    "seedance_backwalk_01.mp4",
+    "seedance_pier_01.mp4",
+    "seedance_swing_01.mp4",
+}
 
 
 class LoRALinear(nn.Module):
@@ -121,38 +147,48 @@ def pick(rows, rng):
     return rng.choices(rows, weights=weights, k=1)[0]
 
 
-def motion_starts(path, nframes, window):
-    """Starts inside a clip, weighted by how much the picture changes there.
+def uniform_starts(nframes, window):
+    """Evenly spaced starts. Every fourth frame keeps the Wan VAE alignment."""
+    if nframes < window:
+        return []
+    return list(range(0, nframes - window + 1, 4))
 
-    A small floor keeps a still stretch available. The score is measured on a
-    tiny decode, not on the training resolution.
+
+def other_index(nframes, start, window, rng, gap=16):
+    """A frame of the same clip that is not this window's first frame.
+
+    Prefer a frame at least `gap` away from the window so the pinned pose is
+    not the pose the later frames continue. Fall back to any frame outside
+    the window, then to a later frame inside it.
     """
-    cmd = [
-        FFMPEG, "-v", "error", "-i", str(path),
-        "-vf", "scale=48:80:flags=area",
-        "-frames:v", str(nframes),
-        "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
-    ]
-    raw = subprocess.check_output(cmd)
-    frame = 80 * 48 * 3
-    count = min(nframes, len(raw) // frame)
-    if count < window:
-        return [], []
-    arr = np.frombuffer(raw[:count * frame], dtype=np.uint8).reshape(count, 80, 48, 3)
-    diff = np.abs(arr[1:].astype(np.float32) - arr[:-1].astype(np.float32)).mean(axis=(1, 2, 3))
-    motion = np.zeros(count, dtype=np.float32)
-    motion[1:] = diff
-    csum = np.cumsum(motion)
-    starts = list(range(0, count - window + 1, 4))
-    weights = []
-    for start in starts:
-        end = start + window - 1
-        total = csum[end] - (csum[start - 1] if start else 0.0)
-        weights.append(float(total) / window + 0.05)
-    return starts, weights
+    window_end = start + window
+    far = [i for i in range(nframes) if i <= start - gap or i >= window_end + gap]
+    if far:
+        return rng.choice(far)
+    outside = [i for i in range(nframes) if i < start or i >= window_end]
+    if outside:
+        return rng.choice(outside)
+    inside = [i for i in range(start + 1, min(window_end, nframes))]
+    if inside:
+        return rng.choice(inside)
+    return None
 
 
-def inject_lora(model, rank):
+def reference_tensor(path, width, height):
+    """Scale and center-crop one reference the way Wan's i2v preprocess does."""
+    img = Image.open(path).convert("RGB")
+    scale = max(width / img.width, height / img.height)
+    resized = img.resize(
+        (round(img.width * scale), round(img.height * scale)), Image.Resampling.LANCZOS)
+    x1 = (resized.width - width) // 2
+    y1 = (resized.height - height) // 2
+    cropped = resized.crop((x1, y1, x1 + width, y1 + height))
+    arr = np.asarray(cropped, dtype=np.float32)
+    ten = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(1)
+    return ten / 127.5 - 1.0
+
+
+def inject_lora(model, rank, attn_only=False):
     targets = []
     for name, module in model.named_modules():
         if not isinstance(module, nn.Linear):
@@ -161,7 +197,7 @@ def inject_lora(model, rank):
         attn = leaf in {"q", "k", "v", "o"} and (
             ".self_attn." in name or ".cross_attn." in name)
         ffn = name.endswith(".ffn.0") or name.endswith(".ffn.2")
-        if attn or ffn:
+        if attn or (ffn and not attn_only):
             targets.append(name)
     for name in targets:
         parent_name, _, child = name.rpartition(".")
@@ -209,6 +245,13 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--shift", type=float, default=5.0)
     parser.add_argument("--text-drop", type=float, default=0.1)
+    parser.add_argument("--anchor-prob", type=float, default=0.25)
+    parser.add_argument("--pin-first", action="store_true")
+    parser.add_argument("--sheet-prob", type=float, default=0.1)
+    parser.add_argument("--clip-ref", action="store_true")
+    parser.add_argument("--ref-prob", type=float, default=0.4)
+    parser.add_argument("--attn-only", action="store_true")
+    parser.add_argument("--downweight", action="store_true")
     parser.add_argument("--seed", type=int, default=81)
     parser.add_argument("--save-every", type=int, default=40)
     parser.add_argument(
@@ -223,6 +266,18 @@ def main():
         raise SystemExit("--frames must be 4n+1 so the Wan VAE can encode it")
     if args.width % 32 or args.height % 32:
         raise SystemExit("width and height must be divisible by 32")
+    if not 0.0 <= args.anchor_prob <= 1.0:
+        raise SystemExit("--anchor-prob must be between 0 and 1")
+    if not 0.0 <= args.sheet_prob <= 1.0:
+        raise SystemExit("--sheet-prob must be between 0 and 1")
+    if not 0.0 <= args.ref_prob <= 1.0:
+        raise SystemExit("--ref-prob must be between 0 and 1")
+    if args.clip_ref and args.pin_first:
+        raise SystemExit("--clip-ref and --pin-first are different objectives")
+    if not args.clip_ref:
+        for label, path in REFS.items():
+            if not path.is_file():
+                raise SystemExit("missing %s reference: %s" % (label, path))
 
     rows = load_rows()
     if args.tier != "all":
@@ -233,17 +288,41 @@ def main():
     noisy = sum(r["seconds"] for r in rows if r["tier"] == "noisy")
     print("CLIPS %s tier %s clean_s %.1f noisy_s %.1f" % (
         len(rows), args.tier, clean, noisy), flush=True)
+    if args.downweight:
+        touched = []
+        for row in rows:
+            if row["file"] in DOWNWEIGHT:
+                row["sample_weight"] = round(float(row["sample_weight"]) / 3.0, 4)
+                touched.append(row["file"])
+        print("DOWNWEIGHT %s" % " ".join(touched), flush=True)
     for row in rows:
-        starts, weights = motion_starts(row["path"], row["nframes"], args.frames)
-        row["starts"] = starts
-        row["start_weights"] = weights
+        row["starts"] = uniform_starts(row["nframes"], args.frames)
     covered = sum(1 for row in rows if row["starts"])
-    print("MOTION_WINDOWS %s/%s clips" % (covered, len(rows)), flush=True)
+    short = [row["file"] for row in rows if not row["starts"]]
+    print("UNIFORM_WINDOWS %s/%s clips" % (covered, len(rows)), flush=True)
+    if short:
+        print("SHORT %s" % " ".join(short), flush=True)
     if args.check_data:
         row = rows[0]
         video = read_window(row["path"], 0, args.frames, args.width, args.height, row["fps"])
         print("CHECK %s %s fps %.3f frames %s tensor %s" % (
             row["file"], row["tier"], row["fps"], row["nframes"], tuple(video.shape)), flush=True)
+        if args.clip_ref:
+            far = near = inside = missing = 0
+            for item in rows:
+                for start in item["starts"]:
+                    window_end = start + args.frames
+                    nframes = item["nframes"]
+                    if any(i <= start - 16 or i >= window_end + 16 for i in range(nframes)):
+                        far += 1
+                    elif any(i < start or i >= window_end for i in range(nframes)):
+                        near += 1
+                    elif start + 1 < min(window_end, nframes):
+                        inside += 1
+                    else:
+                        missing += 1
+            print("CLIPREF far %s near %s inside %s missing %s" % (
+                far, near, inside, missing), flush=True)
         return
 
     sys.path.insert(0, str(WAN_REPO))
@@ -272,11 +351,21 @@ def main():
         vae_pth=str(WAN_CKPT / cfg.vae_checkpoint),
         device=device)
     print("VAE_READY", flush=True)
+    ref_latent = {}
+    if not args.clip_ref:
+        with torch.no_grad():
+            for label, path in REFS.items():
+                frame = reference_tensor(path, args.width, args.height)
+                encoded = vae.encode([frame.to(device)])[0].detach()
+                if encoded.shape[1] != 1:
+                    raise SystemExit("reference %s encoded %s frames" % (label, encoded.shape[1]))
+                ref_latent[label] = encoded
+                print("REF %s %s" % (label, tuple(encoded.shape)), flush=True)
     model = WanModel.from_pretrained(str(WAN_CKPT))
     model.to(device=device, dtype=torch.bfloat16)
     model.requires_grad_(False)
     model.train()
-    names = inject_lora(model, args.rank)
+    names = inject_lora(model, args.rank, attn_only=args.attn_only)
     checkpoint_blocks(model)
     trainable = [p for p in model.parameters() if p.requires_grad]
     print("LORA_LAYERS %s trainable_params %s" % (
@@ -295,7 +384,7 @@ def main():
             if not row["starts"]:
                 print("SKIP_SHORT %s" % row["file"], flush=True)
                 continue
-            start = rng.choices(row["starts"], weights=row["start_weights"], k=1)[0]
+            start = rng.choice(row["starts"])
             video = read_window(
                 row["path"], start, args.frames, args.width, args.height, row["fps"])
             if video is not None:
@@ -307,19 +396,63 @@ def main():
         _, frames, height, width = latent.shape
         tokens_per_frame = (height // patch_h) * (width // patch_w)
         n_tok = frames * tokens_per_frame
+        ref_frame = None
+        if args.clip_ref:
+            sheet = False
+            pin = "none"
+            if rng.random() < args.ref_prob:
+                ref_frame = other_index(row["nframes"], start, args.frames, rng)
+                frame = None if ref_frame is None else read_window(
+                    row["path"], ref_frame, 1, args.width, args.height, row["fps"])
+                if frame is not None:
+                    with torch.no_grad():
+                        ref = vae.encode([frame.to(device)])[0].detach()
+                    same = (
+                        ref.shape[1] == 1
+                        and ref.shape[0] == latent.shape[0]
+                        and ref.shape[2:] == latent.shape[2:])
+                    if same:
+                        latent = latent.clone()
+                        latent[:, :1] = ref
+                        pin = "clipref"
+                    else:
+                        print("REF_SHAPE %s %s vs %s" % (
+                            row["file"], tuple(ref.shape), tuple(latent.shape)), flush=True)
+                        ref_frame = None
+                else:
+                    ref_frame = None
+        elif args.pin_first:
+            sheet = rng.random() < args.sheet_prob
+            pin = "sheet" if sheet else "clip"
+        else:
+            sheet = rng.random() < args.anchor_prob
+            pin = "sheet" if sheet else "none"
+        if sheet:
+            label = row.get("view", "正面")
+            if label not in ref_latent:
+                label = "正面"
+            latent = latent.clone()
+            latent[:, :1] = ref_latent[label]
         noise = torch.randn_like(latent)
         u = torch.rand((), device=device)
         sigma = args.shift * u / (1 + (args.shift - 1) * u)
         sigma = sigma.clamp(1e-4, 1 - 1e-4)
         noisy = (1 - sigma) * latent + sigma * noise
+        if pin != "none":
+            noisy[:, :1] = latent[:, :1]
         target = noise - latent
         t_token = torch.full((1, n_tok), float(sigma * 1000), device=device)
+        if pin != "none":
+            t_token[:, :tokens_per_frame] = 0
         text = "" if rng.random() < args.text_drop else row["caption"]
         context = cache[text].to(device=device, dtype=torch.bfloat16)
         opt.zero_grad(set_to_none=True)
         with torch.amp.autocast("cuda", dtype=torch.bfloat16):
             pred = model([noisy.to(dtype=torch.bfloat16)], t_token, [context], n_tok)[0]
-        loss = (pred.float() - target.float()).pow(2).mean()
+        err = (pred.float() - target.float()).pow(2)
+        if pin != "none":
+            err = err[:, 1:]
+        loss = err.mean()
         if not torch.isfinite(loss):
             raise SystemExit("non-finite loss at step %s" % step)
         loss.backward()
@@ -332,6 +465,9 @@ def main():
             "sigma": round(float(sigma.detach().cpu()), 4),
             "file": row["file"],
             "tier": row["tier"],
+            "pin": pin,
+            "ref_frame": ref_frame,
+            "view": row.get("view", ""),
             "seconds": round(time.time() - t0, 2),
             "grad": grad_ok,
         }
